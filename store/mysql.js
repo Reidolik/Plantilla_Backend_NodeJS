@@ -1,6 +1,7 @@
 const mysql = require('mysql')
-const { search } = require('../api/components/auth/network')
 const config = require('../config')
+const fs = require('fs')
+const path = require('path')
 
 const dbconf = {
     host: config.mysql.host,
@@ -44,9 +45,9 @@ function list(table) {
     })
 }
 
-function get(table, id) {
+function get(table, id, nameID) {
     return new Promise((resolve, reject) => {
-        connection.query(`SELECT * FROM ${table} WHERE id = '${id}'`, (err, data) => {
+        connection.query(`SELECT * FROM ${table} WHERE ${nameID} = '${id}'`, (err, data) => {
             if (err) return reject(err)
             resolve(data)
         })
@@ -62,7 +63,7 @@ function insert(table, data) {
     })
 }
 
-function update(table, data) {
+function update(table, data, IDprincipal) {
     let propNames = Object.getOwnPropertyNames(data);
     for (let i = 0; i < propNames.length; i++) {
         let propName = propNames[i];
@@ -71,28 +72,28 @@ function update(table, data) {
         }
     }
     return new Promise((resolve, reject) => {
-        connection.query(`UPDATE ${table} SET ? WHERE id=?`, [data, data.id], (err, result) => {
+        connection.query(`UPDATE ${table} SET ? WHERE ${IDprincipal}=?`, [data, data[IDprincipal]], (err, result) => {
             if (err) return reject(err);
             resolve(result);
         })
     })
 }
 
-async function upsert(table, data) {
+async function upsert(table, data, IDprincipal) {
     let row = -1
-    if (data.id) {
-        row = await get(table, data.id);
+    if (data[IDprincipal]) {
+        row = await get(table, data[IDprincipal], IDprincipal);
     }
-    if (row.length === 0 || !data.id) {
+    if (row.length === 0 || !data[IDprincipal]) {
         return insert(table, data);
     } else {
-        return update(table, data);
+        return update(table, data, IDprincipal);
     }
 }
 
 function query(table, query) {
     return new Promise((resolve, reject) => {
-        connection.query(`SELECT auth.*, Colaborador.fechaCaducidad FROM ${table} LEFT JOIN Colaborador ON Colaborador.id = auth.id WHERE auth.?`, query, (err, res) => {
+        connection.query(`SELECT auth.*, usuario.Password, usuario.PerfilID, usuario.TipoUsuario FROM ${table} LEFT JOIN usuario ON usuario.UsuarioID = auth.id WHERE auth.?`, query, (err, res) => {
             if (err) return reject(err);
             resolve(res[0] || null);
         })
@@ -101,95 +102,133 @@ function query(table, query) {
 
 // funciones especiales
 
-// guate
-function getAllBySearch(table, search) {
+// -- Mascotas
+function getPetsWithFoto(table, id) {
     return new Promise((resolve, reject) => {
         connection.query(`SELECT
-        *
-    FROM
+        mascota.*, foto.DataFoto, foto.Nombre as MascotaNombre
+        FROM
         ${table}
-    WHERE
-        (
-            nombre LIKE '%${search}%' OR 
-            fecha_info LIKE '%${search}%' OR 
-            cui LIKE '%${search}%' OR 
-            nombre2 LIKE '%${search}%' OR 
-            tipoorganizacion LIKE '%${search}%' OR 
-            nit LIKE '%${search}%' OR 
-            fecha_gc LIKE '%${search}%' OR 
-            habilitado LIKE '%${search}%' OR 
-            adjudicado LIKE '%${search}%' OR 
-            contrasena LIKE '%${search}%' OR 
-            escritura LIKE '%${search}%' OR 
-            fechaconstitucion LIKE '%${search}%' OR 
-            registromercantil LIKE '%${search}%' OR 
-            registromercantildef LIKE '%${search}%' OR 
-            inscripcionsat LIKE '%${search}%' OR 
-            actividad_economica LIKE '%${search}%' OR 
-            dom_departamento LIKE '%${search}%' OR 
-            dom_municipio LIKE '%${search}%' OR 
-            dom_direccion LIKE '%${search}%' OR 
-            dom_telefono LIKE '%${search}%' OR
-            paginaweb LIKE '%${search}%' OR 
-            correo LIKE '%${search}%' OR 
-            com_departamento LIKE '%${search}%' OR 
-            com_municipio LIKE '%${search}%' OR 
-            com_direccion LIKE '%${search}%' OR 
-            com_telefono LIKE '%${search}%'
-        )`, (err, data) => {
+        LEFT JOIN foto ON mascota.MascotaID = foto.MascotaID
+        WHERE mascota.DuenioID = '${id}';`, (err, data) => {
             if (err) return reject(err)
             resolve(data)
         })
     })
 }
 
-function getLimitedNameGuate(table, search) {
-    let auxArr = search.split(' ')
-    if (auxArr.length > 1) {
-        let auxSt = `SELECT
-        *
-        FROM
-        ${table}
-        WHERE MATCH(nombre, nombre_uno, nombre_dos, apellido_uno, apellido_dos, apellido_casada)
-        AGAINST('${auxArr[0]}')`
-        for (let i = 1; i < auxArr.length; i++) {
-            auxSt += `AND MATCH(nombre, nombre_uno, nombre_dos, apellido_uno, apellido_dos, apellido_casada) AGAINST('${auxArr[i]}')`
-        }
-        return new Promise((resolve, reject) => {
-            connection.query(auxSt, (err, data) => {
-                if (err) return reject(err)
-                resolve(data)
-            })
+function getPetsByOwner(table, ownerid) {
+    return new Promise((resolve, reject) => {
+        connection.query(`SELECT * FROM ${table} WHERE DuenioID = '${ownerid}' ORDER BY MascotaID DESC LIMIT 1;`, (err, data) => {
+            if (err) return reject(err)
+            resolve(data)
         })
-    } else {
-        return new Promise((resolve, reject) => {
-            connection.query(`SELECT
-            *
-        FROM
-            ${table}
-        WHERE MATCH(nombre, nombre_uno, nombre_dos, apellido_uno, apellido_dos, apellido_casada)
-        AGAINST('${search}');`, (err, data) => {
-                if (err) return reject(err)
-                resolve(data)
-            })
-        })
-    }
+    })
 }
 
-function getLimitedNameDetailGuate(table, firstname, secondname, firstlastname, secondlastname) {
+// -- Foto mascota
+
+function getFotoByIDpet(table, idpet) {
     return new Promise((resolve, reject) => {
         connection.query(`SELECT
-            *
+        foto.DataFoto, foto.Nombre
         FROM
-            ${table}
-        WHERE MATCH(nombre, nombre_uno, nombre_dos, apellido_uno, apellido_dos, apellido_casada)
-        AGAINST('${firstname}')
-        ${secondname !== 'X4AC2Q' ? `AND MATCH(nombre, nombre_uno, nombre_dos, apellido_uno, apellido_dos, apellido_casada)
-        AGAINST('${secondname}')` : ``}
-        AND MATCH(nombre, nombre_uno, nombre_dos, apellido_uno, apellido_dos, apellido_casada)
-        AGAINST('${firstlastname}')
-        ${secondlastname !== 'X4AC2Q' ? `AND MATCH(nombre, nombre_uno, nombre_dos, apellido_uno, apellido_dos, apellido_casada)
-        AGAINST('${secondlastname}')` : ``}`, (err, data) => {
+        ${table}
+        WHERE MascotaID = '${idpet}';`, (err, data) => {
+            if (err) return reject(err)
+            resolve(data)
+        })
+    })
+}
+
+function savePetFoto(table, data, IDprincipal, file) {
+    return new Promise((resolve, reject) => {
+        connection.query(`INSERT INTO ${table} SET ?`, data, (err, result) => {
+            if (err) return reject(err)
+            resolve(result)
+        })
+    })
+}
+
+// -- Vacunas
+
+function getPetsShots(table, mascotaid) {
+    return new Promise((resolve, reject) => {
+        connection.query(`SELECT
+        VacunaID, Nombre as NombreVacuna, FechaAplicacion, Descripcion
+        FROM
+        ${table}
+        WHERE MascotaID = '${mascotaid}';`, (err, data) => {
+            if (err) return reject(err)
+            resolve(data)
+        })
+    })
+}
+
+// -- Tratamientos
+
+function getPetTreatments(table, petid) {
+    return new Promise((resolve, reject) => {
+        connection.query(`SELECT
+        TratamientoID, MascotaID, Nombre as NombreTratamiento, FechaInicio, FechaFin, Descripcion, Descuento, PrecioInicial, PrecioFinal, CobroID
+        FROM
+        ${table}
+        WHERE MascotaID = '${petid}';`, (err, data) => {
+            if (err) return reject(err)
+            resolve(data)
+        })
+    })
+}
+
+// -- Citas
+function getStandByAppointments(table, mascotaid) {
+    return new Promise((resolve, reject) => {
+        connection.query(`SELECT CM.CitaID, CM.MascotaID, CM.MedicoVeterinarioID, CM.FechaCita, CM.Aprobada, CM.Estado, M.Nombre
+        FROM 
+        ${table} CM
+        LEFT JOIN mascota M ON CM.MascotaID = M.MascotaID
+        WHERE CM.MascotaID = ${mascotaid} AND CM.Aprobada = FALSE AND CM.Estado = 'Creada';`, (err, data) => {
+            if (err) return reject(err)
+            resolve(data)
+        })
+    })
+}
+
+function getAcceptedAppointments(table, mascotaid) {
+    return new Promise((resolve, reject) => {
+        connection.query(`SELECT CM.CitaID, CM.MascotaID, CM.MedicoVeterinarioID, CM.FechaCita, CM.Aprobada, CM.Estado, M.Nombre
+        FROM 
+        ${table} CM
+        LEFT JOIN mascota M ON CM.MascotaID = M.MascotaID
+        WHERE CM.MascotaID = ${mascotaid} AND CM.Aprobada = TRUE AND CM.Estado = 'Aprobada';`, (err, data) => {
+            if (err) return reject(err)
+            resolve(data)
+        })
+    })
+}
+
+// -- Citas admin
+
+function getStandByDates(table, mascotaid) {
+    return new Promise((resolve, reject) => {
+        connection.query(`SELECT CM.*, M.MascotaID, M.Nombre as MascotaNombre, M.FechaNacimiento, M.Especie, M.Raza, M.Sexo, U.UsuarioID, U.Nombre as DuenioNombre, U.Telefono 
+        FROM ${table} CM 
+        LEFT JOIN mascota M ON CM.MascotaID = M.MascotaID 
+        LEFT JOIN usuario U ON M.DuenioID = U.UsuarioID 
+        WHERE CM.Aprobada = FALSE AND CM.Estado = 'Creada';`, (err, data) => {
+            if (err) return reject(err)
+            resolve(data)
+        })
+    })
+}
+
+function getAcceptedDates(table, vetid) {
+    return new Promise((resolve, reject) => {
+        connection.query(`SELECT CM.*, M.MascotaID, M.Nombre as MascotaNombre, M.FechaNacimiento, M.Especie, M.Raza, M.Sexo, U.UsuarioID, U.Nombre as DuenioNombre, U.Telefono 
+        FROM ${table} CM 
+        LEFT JOIN mascota M ON CM.MascotaID = M.MascotaID 
+        LEFT JOIN usuario U ON M.DuenioID = U.UsuarioID 
+        WHERE CM.Aprobada = TRUE AND CM.MedicoVeterinarioID = '${vetid}' AND CM.Estado = 'Aprobada';`, (err, data) => {
             if (err) return reject(err)
             resolve(data)
         })
@@ -201,7 +240,14 @@ module.exports = {
     get,
     upsert,
     query,
-    getAllBySearch,
-    getLimitedNameGuate,
-    getLimitedNameDetailGuate
+    getPetsWithFoto,
+    savePetFoto,
+    getStandByAppointments,
+    getAcceptedAppointments,
+    getStandByDates,
+    getAcceptedDates,
+    getPetsShots,
+    getPetTreatments,
+    getFotoByIDpet,
+    getPetsByOwner
 }

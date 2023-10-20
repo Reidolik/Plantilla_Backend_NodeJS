@@ -8,9 +8,9 @@ module.exports = function (injectedStore) {
         store = require('../../../store/dummy')
     }
 
-    async function login(emailPersonal, contrasenaUsuario) {
-        const data = await store.query(TABLA, { emailPersonal: emailPersonal })
-        return bcrypt.compare(contrasenaUsuario, data.contrasenaUsuario)
+    async function login(Email, Password) {
+        const data = await store.query(TABLA, { Email: Email })
+        return bcrypt.compare(Password, data.Password)
             .then(sonIguales => {
                 if (sonIguales === true) {
                     //generar token
@@ -24,16 +24,14 @@ module.exports = function (injectedStore) {
     async function upsert(data) {
         const authData = {
             id: data.id
-            //idColaborador: 1
         }
 
-        if (data.emailPersonal) {
-            authData.emailPersonal = data.emailPersonal
+        if (data.Email) {
+            authData.Email = data.Email
         }
 
-        if (data.contrasenaUsuario) {
-            authData.contrasenaUsuario = data.contrasenaUsuario
-            //authData.contrasenaUsuario = data.contrasenaUsuario
+        if (data.Password) {
+            authData.Password = data.Password
         }
 
         return store.upsert(TABLA, authData)
